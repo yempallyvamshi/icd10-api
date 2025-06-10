@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CodeAssist AI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="https://img.icons8.com/ios-filled/50/stethoscope.png" type="image/png">
+</head>
+<body class="bg-indigo-50 text-gray-800 font-sans">
+  <div class="max-w-3xl mx-auto px-4 py-8">
+    <div class="flex items-center gap-2 mb-6">
+      <img src="https://img.icons8.com/ios-filled/30/stethoscope.png" alt="Stethoscope" class="w-6 h-6">
+      <h1 class="text-3xl font-bold text-indigo-800">CodeAssist AI</h1>
+    </div>
+
+    <div class="bg-white shadow-md rounded-lg p-6">
+      <h2 class="text-xl font-semibold text-indigo-700 mb-2">
+        💡 ICD-10 Code Converter
+      </h2>
+      <p class="mb-4 text-sm text-gray-600">
+        Enter a medical diagnosis below to get the corresponding ICD-10 codes.
+      </p>
+      <input id="userInput" type="text" placeholder="e.g., Acute myocardial infarction" class="w-full p-3 border rounded-md bg-indigo-50 placeholder-gray-400" list="examples">
+      <datalist id="examples">
+        <option value="Asthma">
+        <option value="Diabetes mellitus">
+        <option value="Fracture of femur">
+        <option value="Hypertension">
+        <option value="J45.909">
+      </datalist>
+      <div class="flex gap-2 mt-2">
+        <button onclick="sendMessage()" class="flex-1 flex items-center justify-center gap-2 bg-indigo-400 hover:bg-indigo-500 text-white font-semibold py-2 rounded-md">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M2.003 5.884l8.21 2.05-8.21 2.05a1 1 0 000 1.932l15 3.75a1 1 0 001.243-1.244l-3.75-15a1 1 0 00-1.932 0z" />
+          </svg>
+          Convert to ICD-10
+        </button>
+        <button onclick="toggleTheme()" class="bg-gray-100 text-sm text-gray-600 px-3 rounded hover:bg-gray-200">🌓 Theme</button>
+        <button onclick="shareResults()" class="bg-gray-100 text-sm text-gray-600 px-3 rounded hover:bg-gray-200">🔗 Share</button>
+      </div>
+
+      <div id="loading" class="text-center my-4 hidden">
+        <div class="animate-spin inline-block w-6 h-6 border-4 border-indigo-500 border-t-transparent rounded-full"></div>
+        <p class="text-sm text-indigo-600 mt-2">Processing...</p>
+      </div>
+
+      <div id="responseContainer" class="mt-6 hidden">
+        <h3 class="text-lg font-semibold text-indigo-700 mb-2">Conversion Result:</h3>
+        <div id="response" class="text-gray-700 bg-indigo-50 p-4 rounded-md text-sm whitespace-pre-line"></div>
+        <button onclick="exportFullHistory()" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700">Export as .txt</button>
+      </div>
+
+      <div id="historyContainer" class="mt-6">
+        <h3 class="text-md font-semibold text-indigo-700 mb-2">Conversion History:</h3>
+        <ul id="historyList" class="list-disc list-inside text-sm text-gray-700"></ul>
+      </div>
+    </div>
+
+    <p class="text-xs text-gray-500 text-center mt-6">
+      ⚠️ Results are AI-generated and may not be 100% accurate. Please verify with official ICD-10-CM sources before use.
+    </p>
+  </div>
+
+  <script>
+    let history = [];
+
+    async function sendMessage() {
+      const userInput = document.getElementById("userInput").value;
+      const responseDiv = document.getElementById("response");
+      const container = document.getElementById("responseContainer");
+      const loader = document.getElementById("loading");
+
+      loader.classList.remove("hidden");
+      container.classList.add("hidden");
+
+      try {
+        const res = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: userInput }),
+        });
+        const data = await res.json();
+
+        loader.classList.add("hidden");
+        container.classList.remove("hidden");
+        const responseContent = data.response || data.error;
+        responseDiv.innerHTML = markdownToHTML(responseContent);
+        history.push({ input: userInput, response: responseContent });
+        fetchHistory();
+        container.scrollIntoView({ behavior: "smooth" });
+      } catch (err) {
+        loader.classList.add("hidden");
+        container.classList.remove("hidden");
+        responseDiv.innerHTML = "<p class='text-red-600'>Error fetching response</p>";
+      }
+    }
+
+    function markdownToHTML(md) {
+      const html = md.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                     .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                     .replace(/`(.*?)`/g, '<code class="bg-indigo-100 px-1 rounded">$1</code>')
+                     .replace(/\n/g, '<br>')
+                     .replace(/\b([A-Z]\d{2}(\.\d+)?)\b/g, '<span class="inline-block bg-indigo-500 text-white px-2 py-1 rounded-full text-xs font-semibold mr-1">$1</span>');
+      return html;
+    }
+
+    function exportFullHistory() {
+      let fullText = history.map(item => `Diagnosis: ${item.input}\n\nResult:\n${item.response.replace(/<[^>]*>?/gm, '')}\n\n---\n`).join('');
+      const blob = new Blob([fullText], { type: "text/plain" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "ICD10_History.txt";
+      link.click();
+    }
+
+    function fetchHistory() {
+      const historyList = document.getElementById("historyList");
+      historyList.innerHTML = history.map(item => `<li class='mb-4'><strong>${item.input}</strong><br><div class='ml-4 mt-1'>${markdownToHTML(item.response)}</div></li>`).join("");
+    }
+
+    function toggleTheme() {
+      document.body.classList.toggle("bg-white");
+      document.body.classList.toggle("text-black");
+    }
+
+    function shareResults() {
+      if (!history.length) return alert("No results to share.");
+      const latest = history[history.length - 1];
+      const text = encodeURIComponent(`Diagnosis: ${latest.input}\nResult: ${latest.response.replace(/<[^>]*>?/gm, '')}`);
+      const shareURL = `https://wa.me/?text=${text}`;
+      window.open(shareURL, '_blank');
+    }
+  </script>
+</body>
+</html>
