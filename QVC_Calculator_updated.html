@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Optum QVC Calculator</title>
+<style>
+  :root{
+    --brand:#b44700; --brand-dk:#9a3a00; --panel:#fafafa; --muted:#666;
+    --ok:#0a58ca; --warn:#9c6f00; --border:#eee; --err:#b00020;
+  }
+  * { box-sizing: border-box; }
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#fff;color:#222;line-height:1.45}
+  .container{max-width:820px;margin:32px auto;padding:0 16px}
+  h1{color:var(--brand);margin-bottom:8px}
+  label{display:block;margin:12px 0 4px}
+  input,select{width:100%;padding:10px;border:1px solid #ccc;border-radius:6px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  button{margin-top:14px;background:var(--brand);color:#fff;border:0;padding:10px 14px;border-radius:6px;cursor:pointer}
+  button:hover{background:var(--brand-dk)}
+  .card{margin-top:18px;border:1px solid var(--border);border-radius:8px;padding:14px;background:#fafafa}
+  .muted{color:var(--muted);font-size:.9em}
+  .bold{font-weight:700}
+  .highlight{color:var(--ok);font-weight:700}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#efefef;margin-left:6px}
+  .warn{color:var(--warn)}
+  .error{color:var(--err);margin-top:8px}
+  .hidden{display:none}
+  .grid2{display:grid;grid-template-columns:auto 1fr;gap:8px 12px}
+  .note{background:#fff7e6;border:1px solid #ffd7a1;border-radius:6px;padding:8px 10px;margin-top:10px}
+  code.small{background:#f3f3f3;padding:1px 6px;border-radius:4px}
+</style>
+<style>
+#criteriaDisplay table {
+    width: 80%;
+    border-collapse: collapse;
+    margin: 20px auto;
+    font-family: Arial, sans-serif;
+}
+#criteriaDisplay th, #criteriaDisplay td {
+    border: 1px solid #ccc;
+    padding: 8px;
+    text-align: center;
+}
+#criteriaDisplay th {
+    background-color: #f2f2f2;
+}
+</style></head>
+<body>
+<div class="container">
+<h1>Coder QVC Calculator</h1>
+<div class="row">
+<div>
+<label>Units Earned:
+          <input id="units" placeholder="e.g., 134.72" step="0.01" type="number"/>
+</label>
+</div>
+<div>
+<label>Quality (%):
+          <input id="quality" placeholder="e.g., 98.86 or 0.9886" step="0.01" type="number"/>
+</label>
+</div>
+</div>
+<div class="row">
+<div>
+<label>SG Grade:
+          <select id="sg">
+<option disabled="" selected="" value="">Select SG grade</option>
+<option value="SG 22">SG22</option>
+<option value="SG 23">SG23</option>
+<option value="SG 24">SG24</option>
+</select>
+</label>
+</div>
+<div>
+<label>No. of Working Days:
+          <input id="workDays" placeholder="e.g., 15" step="0.5" type="number"/>
+</label>
+</div>
+</div>
+<div class="row">
+<div>
+<label>Standard Working Days:
+          <input id="stdDays" placeholder="e.g., 21" step="1" type="number"/>
+</label>
+</div>
+<div style="align-self:end">
+<button id="calc">Calculate QVC</button>
+</div>
+</div>
+<div class="error hidden" id="msg"></div>
+<div class="card" id="out"></div>
+<div class="note">
+<div class="bold">Rules applied:</div>
+<ul>
+<li><span class="bold">WD ≤ 7 → ₹0 payout</span> (both metrics, even if tiers are met).</li>
+<li><span class="bold">8–15 WD → prorate</span> each metric: <code class="small">(Metric Base Amount / 16) × WD</code>.</li>
+<li><span class="bold">WD ≥ 16 → full</span> metric amount (no day proration).</li>
+<li><span class="bold">Quality &lt; Min Quality</span> → ₹0 on both metrics.</li>
+</ul>
+<style>
+.blink {
+  animation: blinker 1.5s linear infinite;
+  color: red;
+  font-style: italic;
+}
+
+@keyframes blinker {
+  50% {
+    opacity: 0;
+  }
+}
+</style>
+
+<div class="blink">
+  Note: QVC payouts will be determined based on final unit counts, quality scores, and the number of working days. All figures are subject to verification and approval by the supervisory teams at the end of the month.
+</div>
+
+</div>
+</div>
+<script>
+(function () {
+  // =======================
+  // SG Funding / Min Quality
+  // =======================
+  const SG_BASE = {
+    'SG 22': { funding: 1500, minQ: 0.90 },
+    'SG 23': { funding: 1800, minQ: 0.935 },
+    'SG 24': { funding: 2800, minQ: 0.95 }
+  };
+
+  // =======================
+  // Tier maps (EXACTLY as you provided)
+  // Production: Final Units MIN thresholds (post-extrapolation), payout % of funding
+  // Quality: min/max % bands (0..100 scale), payout % of funding
+  // =======================
+  const TIER_CONFIG = {
+    production: {
+      'SG 22': [
+        { name:'Tier 1', min:282.00, payoutPct:200 },
+        { name:'Tier 2', min:210.00, payoutPct:100 },
+        { name:'Tier 3', min:168.00, payoutPct:50  },
+        { name:'No Incentive', min:134.00, payoutPct:0 },
+        { name:'NC', min:0, max:133.99, payoutPct:0 }
+      ],
+      'SG 23': [
+        { name:'Tier 1', min:352.00, payoutPct:200 },
+        { name:'Tier 2', min:252.00, payoutPct:100 },
+        { name:'Tier 3', min:202.00, payoutPct:50  },
+        { name:'No Incentive', min:182.00, payoutPct:0 },
+        { name:'NC', min:0, max:181.99, payoutPct:0 }
+      ],
+      'SG 24': [
+        { name:'Tier 1', min:424.00, payoutPct:200 },
+        { name:'Tier 2', min:302.00, payoutPct:100 },
+        { name:'Tier 3', min:242.00, payoutPct:50  },
+        { name:'No Incentive', min:218.00, payoutPct:0 },
+        { name:'NC', min:0, max:217.99, payoutPct:0 }
+      ]
+    },
+
+    quality: {
+      'SG 22': [
+        { name:'Tier 1', min:97.00, max:100.00, payoutPct:200 },
+        { name:'Tier 2', min:94.00, max:96.99, payoutPct:100 },
+        { name:'Tier 3', min:90.00, max:93.99, payoutPct:50  },
+        { name:'No Incentive', min:85.00, max:89.99, payoutPct:0 },
+        { name:'NC', max:84.99, payoutPct:0 }
+      ],
+      'SG 23': [
+        { name:'Tier 1', min:98.00, max:100.00, payoutPct:200 },
+        { name:'Tier 2', min:95.00, max:97.99, payoutPct:100 },
+        { name:'Tier 3', min:93.50, max:94.99, payoutPct:50  },
+        { name:'No Incentive', min:90.00, max:93.49, payoutPct:0 },
+        { name:'NC', max:89.99, payoutPct:0 }
+      ],
+      'SG 24': [
+        { name:'Tier 1', min:99.00, max:100.00, payoutPct:200 },
+        { name:'Tier 2', min:97.00, max:98.99, payoutPct:100 },
+        { name:'Tier 3', min:95.00, max:96.99, payoutPct:50  },
+        { name:'No Incentive', min:93.00, max:94.99, payoutPct:0 },
+        { name:'NC', max:92.99, payoutPct:0 }
+      ]
+    }
+  };
+
+  // ================
+  // Helper functions
+  // ================
+  const money = n => new Intl.NumberFormat('en-IN', { style:'currency', currency:'INR', maximumFractionDigits:2 }).format(n ?? 0);
+  const round2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
+
+  // *** Final Units rule (your latest requirement) ***
+  // If WD < Standard → (Units / WD) * Std; else → Units
+  function computeFinalUnits(units, workDays, stdDays) {
+    if (!Number.isFinite(units) || !Number.isFinite(workDays) || !Number.isFinite(stdDays) ||
+        workDays <= 0 || stdDays <= 0) {
+      return 0;
+    }
+    if (workDays < stdDays) {
+      return (units / workDays) * stdDays;
+    }
+    return units;
+  }
+
+  function resolveProdTier(finalUnits, sg) {
+    const tiers = TIER_CONFIG.production[sg] || [];
+    // sort by descending min so the highest eligible tier wins
+    const sorted = [...tiers].sort((a,b) => (b.min ?? 0) - (a.min ?? 0));
+    for (const t of sorted) {
+      const min = t.min ?? 0;
+      const max = (t.max !== undefined) ? t.max : Infinity;
+      if (finalUnits >= min && finalUnits <= max) return t;
+      if (finalUnits >= min && t.max === undefined) return t;
+    }
+    return { name:'No Incentive', payoutPct:0 };
+  }
+
+  function resolveQualTier(qPct100, sg) {
+    const tiers = TIER_CONFIG.quality[sg] || [];
+    for (const t of tiers) {
+      const min = (t.min !== undefined) ? t.min : -Infinity;
+      const max = (t.max !== undefined) ? t.max : Infinity;
+      if (qPct100 >= min && qPct100 <= max) return t;
+    }
+    return { name:'No Incentive', payoutPct:0 };
+  }
+
+  // *****************************
+  // Working Days bracketed rule
+  // *****************************
+  // baseAmt = funding * (payoutPct/100), then:
+  //   WD ≤ 7  -> 0
+  //   8..15   -> (baseAmt / 16) * WD
+  //   ≥16     -> baseAmt
+  function applyWorkingDaysRule(baseAmt, workDays) {
+    if (workDays <= 7) return 0;
+    if (workDays >= 16) return baseAmt;
+    return baseAmt * (workDays / 16);
+  }
+
+  document.getElementById('calc').addEventListener('click', () => {
+    const units = parseFloat(document.getElementById('units').value);
+    const qualityInput = parseFloat(document.getElementById('quality').value);
+    const sg = document.getElementById('sg').value;
+    const workDays = parseFloat(document.getElementById('workDays').value);
+    const stdDays = parseFloat(document.getElementById('stdDays').value);
+
+    const msg = document.getElementById('msg');
+    const out = document.getElementById('out');
+    msg.classList.add('hidden');
+    msg.textContent = '';
+    out.innerHTML = '';
+
+    // Validate inputs
+    if (!sg || !Number.isFinite(units) || !Number.isFinite(qualityInput) ||
+        !Number.isFinite(workDays) || !Number.isFinite(stdDays) ||
+        workDays <= 0 || stdDays <= 0) {
+      msg.textContent = 'Please enter valid values for all fields (SG, Units, Quality, Working Days, Standard Working Days).';
+      msg.classList.remove('hidden');
+      return;
+    }
+
+    const base = SG_BASE[sg] || {};
+    if (!base.funding || base.minQ === undefined) {
+      msg.textContent = 'Configuration missing for the selected SG. Please check SG settings.';
+      msg.classList.remove('hidden');
+      return;
+    }
+
+    // Quality may be typed as 98.6 or 0.986
+    const qPct = (qualityInput > 1) ? (qualityInput / 100) : qualityInput;
+    const qPct100 = qPct * 100;
+
+    // Gate 1: Working Days ≤ 7 → immediate 0 (final payout)
+    if (workDays <= 7) {
+      out.innerHTML = `
+        <div class="warn">Working Days is ${workDays}. As per rule, payout for both metrics is ₹0 when WD ≤ 7.</div>
+      `;
+      return;
+    }
+
+    // Gate 2: Quality < MinQ → 0 on both metrics
+    if (qPct < base.minQ) {
+      out.innerHTML = `
+        <div class="warn">Quality ${(qPct*100).toFixed(2)}% is below Min Quality ${(base.minQ*100).toFixed(2)}% for ${sg}. No payout in any metric.</div>
+      `;
+      return;
+    }
+
+    // Resolve tiers using the new Final Units rule
+    const finalUnits = computeFinalUnits(units, workDays, stdDays);
+    const prodTier = resolveProdTier(finalUnits, sg);
+    const qualTier = resolveQualTier(qPct100, sg);
+
+    // Base (full) amounts per metric (no WD proration yet)
+    const prodBase = base.funding * (prodTier.payoutPct || 0) / 100;
+    const qualBase = base.funding * (qualTier.payoutPct || 0) / 100;
+
+    // Apply WD bracketed rule
+    const prodAmt = round2(applyWorkingDaysRule(prodBase, workDays));
+    const qualAmt = round2(applyWorkingDaysRule(qualBase, workDays));
+    const total = round2(prodAmt + qualAmt);
+
+    // Bracket text
+    let bracket = '';
+    if (workDays <= 7) bracket = 'WD ≤ 7 → ₹0 (both metrics)';
+    else if (workDays <= 15) bracket = `8 ≤ WD ≤ 15 → prorated by WD/16`;
+    else bracket = 'WD ≥ 16 → full metric amount';
+
+    out.innerHTML = `
+      <div class="grid2">
+        <div class="bold">Final Units:</div>
+        <div>${finalUnits.toFixed(2)} <span class="muted">(If Working Days < Standard Working Days, then use (Units ÷ Working Days) × Standard Working Days; otherwise, use Earned Units)</span></div>
+
+        <div class="bold">Production Tier:</div>
+        <div>${prodTier.name || '—'} <span class="pill">Payout % = ${prodTier.payoutPct ?? 0}%</span></div>
+
+        <div class="bold">Quality Tier:</div>
+        <div>${qualTier.name || '—'} <span class="pill">Payout % = ${qualTier.payoutPct ?? 0}%</span></div>
+
+        <div class="bold">Funding (per metric):</div><div>${money(base.funding)}</div>
+        <div class="bold">Min Quality:</div><div>${(base.minQ*100).toFixed(2)}%</div>
+
+        <div class="bold">Production Incentive:</div><div>${money(prodAmt)}</div>
+        <div class="bold">Quality Incentive:</div><div>${money(qualAmt)}</div>
+        <div class="bold highlight">Total QVC:</div><div class="highlight">${money(total)}</div>
+      </div>
+    `;
+  });
+})();
+
+</script>
+<div id="criteriaDisplay"></div><script>
+const SG_BASE = {
+  'SG 22': { funding: 1500, minQ: 0.90 },
+  'SG 23': { funding: 1800, minQ: 0.935 },
+  'SG 24': { funding: 2800, minQ: 0.95 }
+};
+
+const TIER_CONFIG = {
+  production: {
+    'SG 22': [
+      { name:'Tier 1', min:282.00, max:Infinity, payoutPct:200 },
+      { name:'Tier 2', min:210.00, max:281.99, payoutPct:100 },
+      { name:'Tier 3', min:168.00, max:209.99, payoutPct:50 },
+      { name:'No Incentive', min:134.00, max:167.99, payoutPct:0 },
+      { name:'NC', min:0, max:133.99, payoutPct:0 }
+    ],
+    'SG 23': [
+      { name:'Tier 1', min:352.00, max:Infinity, payoutPct:200 },
+      { name:'Tier 2', min:252.00, max:351.99, payoutPct:100 },
+      { name:'Tier 3', min:202.00, max:251.99, payoutPct:50 },
+      { name:'No Incentive', min:182.00, max:201.99, payoutPct:0 },
+      { name:'NC', min:0, max:181.99, payoutPct:0 }
+    ],
+    'SG 24': [
+      { name:'Tier 1', min:424.00, max:Infinity, payoutPct:200 },
+      { name:'Tier 2', min:302.00, max:423.99, payoutPct:100 },
+      { name:'Tier 3', min:242.00, max:301.99, payoutPct:50 },
+      { name:'No Incentive', min:218.00, max:241.99, payoutPct:0 },
+      { name:'NC', min:0, max:217.99, payoutPct:0 }
+    ]
+  },
+  quality: {
+    'SG 22': [
+      { name:'Tier 1', min:97.00, max:100.00, payoutPct:200 },
+      { name:'Tier 2', min:94.00, max:96.99, payoutPct:100 },
+      { name:'Tier 3', min:90.00, max:93.99, payoutPct:50 },
+      { name:'No Incentive', min:85.00, max:89.99, payoutPct:0 },
+      { name:'NC', min:0, max:84.99, payoutPct:0 }
+    ],
+    'SG 23': [
+      { name:'Tier 1', min:98.00, max:100.00, payoutPct:200 },
+      { name:'Tier 2', min:95.00, max:97.99, payoutPct:100 },
+      { name:'Tier 3', min:93.50, max:94.99, payoutPct:50 },
+      { name:'No Incentive', min:90.00, max:93.49, payoutPct:0 },
+      { name:'NC', min:0, max:89.99, payoutPct:0 }
+    ],
+    'SG 24': [
+      { name:'Tier 1', min:99.00, max:100.00, payoutPct:200 },
+      { name:'Tier 2', min:97.00, max:98.99, payoutPct:100 },
+      { name:'Tier 3', min:95.00, max:96.99, payoutPct:50 },
+      { name:'No Incentive', min:93.00, max:94.99, payoutPct:0 },
+      { name:'NC', min:0, max:92.99, payoutPct:0 }
+    ]
+  }
+};
+
+function renderCriteria() {
+  const container = document.getElementById('criteriaDisplay');
+  let html = '';
+
+  Object.keys(SG_BASE).forEach(sg => {
+    html += `<h3>${sg}</h3>`;
+    html += `<table><tr><th>Funding</th><th>Min Quality</th></tr>
+             <tr><td>₹${SG_BASE[sg].funding}</td><td>${(SG_BASE[sg].minQ * 100).toFixed(1)}%</td></tr></table>`;
+
+    html += `<h4>Production Tiers</h4><table><tr><th>Tier</th><th>Min</th><th>Max</th><th>Payout %</th></tr>`;
+    TIER_CONFIG.production[sg].forEach(tier => {
+      html += `<tr><td>${tier.name}</td><td>${tier.min}</td><td>${tier.max === Infinity ? '-' : tier.max}</td><td>${tier.payoutPct}%</td></tr>`;
+    });
+    html += `</table>`;
+
+    html += `<h4>Quality Tiers</h4><table><tr><th>Tier</th><th>Min</th><th>Max</th><th>Payout %</th></tr>`;
+    TIER_CONFIG.quality[sg].forEach(tier => {
+      html += `<tr><td>${tier.name}</td><td>${tier.min ?? '-'}</td><td>${tier.max ?? '-'}</td><td>${tier.payoutPct}%</td></tr>`;
+    });
+    html += `</table>`;
+  });
+
+  container.innerHTML = html;
+}
+
+document.addEventListener('DOMContentLoaded', renderCriteria);
+</script></body>
+</html>
